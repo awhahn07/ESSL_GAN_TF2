@@ -12,4 +12,5 @@ __pycache__
 # Dont track files
 IP_DATA.py
 GAN_UTIL_IP.py
+keras_test.py
 *.mat

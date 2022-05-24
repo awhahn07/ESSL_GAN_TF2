@@ -5,6 +5,7 @@ from IP_DATA import IP_DS
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import CategoricalCrossentropy
 from tensorflow.keras.utils import to_categorical
+import tensorflow as tf
 
 dataSet = IP_DS()
 dat, lab = dataSet.scaled()
@@ -31,4 +32,10 @@ gan.compile(discriminator_optimizer=disc_optimizer, generator_optimizer=gen_opti
 
 #%%
 lab = to_categorical(lab, num_classes=number_classes)
-gan.fit(x=dat, y=lab, batch_size=50)
+
+dat = tf.data.Dataset.from_tensor_slices(dat)
+lab = tf.data.Dataset.from_tensor_slices(lab)
+
+ds = tf.data.Dataset.zip((dat, lab)).shuffle(len(dat)).batch(50)
+
+gan.fit(ds)
