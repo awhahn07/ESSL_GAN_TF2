@@ -8,3 +8,8 @@ __pycache__
 
 # Default ignored files
 /workspace.xml
+
+# Dont track files
+IP_DATA.py
+GAN_UTIL_IP.py
+*.mat
