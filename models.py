@@ -49,6 +49,11 @@ def make_discriminator(number_classes, target_length):
 
 
 def make_gan_models(number_classes, target_length, noise_dimensions):
+    """Make Discriminator and Generator models for ESSL GAN
+    NOTE:
+        Must include number of true classes (n) plus 1
+        number_classes = n + 1 where n is number of true classes
+    """
     d = make_discriminator(
         number_classes=number_classes,
         target_length=target_length,
