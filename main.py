@@ -6,6 +6,7 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import CategoricalCrossentropy
 from tensorflow.keras.utils import to_categorical
 import tensorflow as tf
+import datetime
 
 dataSet = IP_DS()
 dat, lab = dataSet.scaled()
@@ -38,4 +39,7 @@ lab = tf.data.Dataset.from_tensor_slices(lab)
 
 ds = tf.data.Dataset.zip((dat, lab)).shuffle(len(dat)).batch(50)
 
-gan.fit(ds)
+log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+
+gan.fit(ds, epochs=1, callbacks=[tensorboard_callback])

@@ -7,7 +7,7 @@ Created on Tue May 17 15:59:18 2022
 import tensorflow as tf
 import numpy as np
 from tensorflow.keras import Model
-from tensorflow.keras.utils import to_categorical
+# from tensorflow.keras.utils import to_categorical
 
 def make_class_weights(labels, class_weights):
     if class_weights == None:
@@ -51,7 +51,6 @@ def generator_vector(self):
     return np.append(noise_vector, gen_labels, axis=1), gen_labels
 '''
 
-
 class EsslGAN(Model):
 
     def __init__(self, generator, discriminator, noise_dim=100):
@@ -88,23 +87,27 @@ class EsslGAN(Model):
         Z fed into Generator G has a size of Noise_Dim + Class Size.
         Then it is batched into Batch_Size
         '''
-        #TODO need to figure out logic for batch size
-        batch_size = 50 # tf.shape(real_data)[0]
+        batch_size = tf.shape(real_data)[0]
         num_classes = self.discriminator.output_shape[-1]
 
         # Labels for generator loss, correspond to real classes and conditional vectors
-        gen_labels = np.random.randint(0, num_classes - 1, size=batch_size)
-        gen_labels = to_categorical(gen_labels, num_classes=num_classes)
+        gen_labels = tf.random.uniform(
+            minval=0,
+            maxval=num_classes - 1,  # only generate labels corresponding to real classes, no n+1
+            shape=(batch_size,),
+            dtype=tf.int32)
+
+        gen_labels = tf.one_hot(gen_labels, depth=num_classes)
 
         # Generate noise vector of size batch_size, noise_dim
-        noise_vector = np.random.normal(size=[batch_size, self.noise_dim]).astype('float32')
+        noise_vector = tf.random.normal(shape=(batch_size, self.noise_dim))
 
         # Input vector to generator, labels embedded into noise
-        batch_noise_labeled = np.append(noise_vector, gen_labels, axis=1)
+        batch_noise_labeled = tf.concat([noise_vector, gen_labels], axis=1)
 
         # Labels for synthetic Discriminator Loss
-        syn_loss_labels = np.ones(batch_size) * (num_classes - 1)
-        syn_loss_labels = to_categorical(syn_loss_labels, num_classes=num_classes)
+        syn_loss_labels = tf.cast(tf.ones(batch_size) * num_classes, tf.int32)
+        syn_loss_labels = tf.one_hot(syn_loss_labels, depth=num_classes)
 
         ''' This is the Tensorflow implementation to control at lower levels
         the forward propogation and subsequent backprop of gradients.
