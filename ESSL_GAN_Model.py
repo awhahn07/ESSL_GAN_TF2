@@ -7,63 +7,40 @@ Created on Tue May 17 15:59:18 2022
 import tensorflow as tf
 import numpy as np
 from tensorflow.keras import Model
-# from tensorflow.keras.utils import to_categorical
 
+
+@tf.function
 def make_class_weights(labels, class_weights):
-    if class_weights == None:
+    if class_weights is None:
         return 1
-    ind = [np.argmax(lab) for lab in labels]
-    weights = [class_weights[i] for i in ind]
-    return weights
+    else:
+        ind = tf.math.argmax(labels, axis=1)
+        weights = tf.map_fn(lambda t: class_weights[t], ind, fn_output_signature=tf.float32)
+        return weights
 
-
-'''
-def generator_loss(generated_output, labels, weights=1):
-    gen_loss = softmax(labels, generated_output, label_smoothing=0.1, weights=weights)
-    return gen_loss
-
-def discriminator_loss(real_output, generated_output, train_lab, weights=1):
-    """Computes discriminator loss."""
-    # Compute real portion of loss
-    real_loss = softmax(train_lab, real_output, label_smoothing=0.1, weights=weights)
-
-    # Compute real portion of loss
-    gen_loss_labels = tf.ones(self.batch_size) * (self.nb_class - 1)
-    gen_loss_labels = k.utils.to_categorical(gen_loss_labels, num_classes=self.nb_class)
-
-    generated_loss = softmax(gen_loss_labels, generated_output, label_smoothing=0.1)
-
-    total_loss = real_loss + self.gamma * generated_loss
-    return total_loss, real_loss, generated_loss
-    
-def generator_vector(self):
-    """ Generate vector of random ints in range of all valid TRUE classes,
-
-    i.e. Classes C_0...C_n. Fake class is C_n+1  """
-
-    gen_labels = np.random.randint(0, self.nb_class - 1, size=self.batch_size)
-    gen_labels = k.utils.to_categorical(gen_labels, num_classes=self.nb_class)
-
-    # Generate noise vector of size batch_size,noise_dim
-    noise_vector = np.random.normal(size=[self.batch_size, self.noise_dim]).astype('float32')
-
-    # Return labels encoded into noise
-    return np.append(noise_vector, gen_labels, axis=1), gen_labels
-'''
 
 class EsslGAN(Model):
 
-    def __init__(self, generator, discriminator, noise_dim=100):
+    def __init__(self, generator, discriminator, noise_dim=100, gamma=0.25, class_weights=None):
         super().__init__()
         self.discriminator = discriminator
         self.generator = generator
         self.noise_dim = noise_dim
-        self.gamma = 0.25
+        self.gamma = gamma
         self.discriminator_optimizer = None
         self.generator_optimizer = None
         self.loss_fn = None
-        self.gen_loss_tracker = tf.keras.metrics.Mean(name='Generator Loss')
+        self.gen_loss_tracker = tf.keras.metrics.Mean(name="Generator Loss")
         self.disc_loss_tracker = tf.keras.metrics.Mean(name="Discriminator Loss")
+        self.d_real_loss_tracker = tf.keras.metrics.Mean(name="Discriminator Loss, Real")
+        self.d_syn_loss_tracker = tf.keras.metrics.Mean(name="Discriminator Loss, Synthetic")
+        self.pDu = tf.keras.metrics.CategoricalAccuracy(name="Discriminator Accuracy, Unsupervised")
+        self.pDs = tf.keras.metrics.CategoricalAccuracy(name="Discriminator Accuracy, Supervised")
+        self.pGe = tf.keras.metrics.CategoricalAccuracy(name="Generator Error")
+        self.pGp = tf.keras.metrics.CategoricalAccuracy(name="Generator Precision")
+        self.synthetic_loss = 0
+        self.real_loss = 0
+        self.class_weights = class_weights
 
     def compile(self, discriminator_optimizer, generator_optimizer, loss_fn):
         super().compile()
@@ -74,7 +51,11 @@ class EsslGAN(Model):
     # TODO add additional losses/metrics
     @property
     def metrics(self):
-        return [self.gen_loss_tracker, self.disc_loss_tracker]
+        return [
+            self.gen_loss_tracker, self.disc_loss_tracker,
+            self.d_real_loss_tracker, self.d_syn_loss_tracker,
+            self.pDu, self.pDs, self.pGp
+        ]
 
     def train_step(self, data):
 
@@ -93,20 +74,20 @@ class EsslGAN(Model):
         # Labels for generator loss, correspond to real classes and conditional vectors
         gen_labels = tf.random.uniform(
             minval=0,
-            maxval=num_classes - 1,  # only generate labels corresponding to real classes, no n+1
+            maxval=num_classes - 2,  # only generate labels corresponding to real classes, no n+1
             shape=(batch_size,),
             dtype=tf.int32)
 
-        gen_labels = tf.one_hot(gen_labels, depth=num_classes)
+        conditional_vector = tf.one_hot(gen_labels, depth=num_classes)
 
         # Generate noise vector of size batch_size, noise_dim
         noise_vector = tf.random.normal(shape=(batch_size, self.noise_dim))
 
         # Input vector to generator, labels embedded into noise
-        batch_noise_labeled = tf.concat([noise_vector, gen_labels], axis=1)
+        batch_noise_labeled = tf.concat([noise_vector, conditional_vector], axis=1)
 
         # Labels for synthetic Discriminator Loss
-        syn_loss_labels = tf.cast(tf.ones(batch_size) * num_classes, tf.int32)
+        syn_loss_labels = tf.cast(tf.ones(batch_size) * num_classes - 1, tf.int32)
         syn_loss_labels = tf.one_hot(syn_loss_labels, depth=num_classes)
 
         ''' This is the Tensorflow implementation to control at lower levels
@@ -114,8 +95,8 @@ class EsslGAN(Model):
         The Training step is implemented in a context manager with statement, 
         where the gradients of D and G are stored in "GradientTapes" '''
 
-        real_loss_weights = make_class_weights(labels, class_weights=None)
-        syn_loss_weights = make_class_weights(gen_labels, class_weights=None)
+        real_loss_weights = make_class_weights(labels, class_weights=self.class_weights)
+        syn_loss_weights = make_class_weights(conditional_vector, class_weights=self.class_weights)
 
         with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
             '''Generate Images from G network'''
@@ -126,7 +107,7 @@ class EsslGAN(Model):
             synthetic_predictions = self.discriminator(generated_images, training=True)
 
             '''Compute Generator Loss using Categorical Crossentropy'''
-            gen_loss = self.loss_fn(gen_labels,
+            gen_loss = self.loss_fn(conditional_vector,
                                     synthetic_predictions,
                                     sample_weight=syn_loss_weights
                                     )
@@ -143,7 +124,7 @@ class EsslGAN(Model):
                                           sample_weight=syn_loss_weights
                                           )
 
-            disc_loss = real_loss + self.gamma * synthetic_loss
+            disc_loss = ((1 - self.gamma) * real_loss) + (self.gamma * synthetic_loss)
 
         '''calculate gradients'''
         gradients_of_generator = gen_tape.gradient(gen_loss, self.generator.trainable_weights)
@@ -158,9 +139,13 @@ class EsslGAN(Model):
         )
 
         # Monitor loss.
+
         self.gen_loss_tracker.update_state(gen_loss)
         self.disc_loss_tracker.update_state(disc_loss)
-        return {
-            "g_loss": self.gen_loss_tracker.result(),
-            "d_loss": self.disc_loss_tracker.result(),
-        }
+        self.d_real_loss_tracker.update_state(real_loss)
+        self.d_syn_loss_tracker.update_state(synthetic_loss)
+        self.pDu.update_state(syn_loss_labels, synthetic_predictions)
+        self.pDs.update_state(labels, real_predictions)
+        self.pGp.update_state(conditional_vector, synthetic_predictions)
+
+        return {m.name: m.result() for m in self.metrics}
