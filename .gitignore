@@ -14,3 +14,4 @@ __pycache__
 IP_DATA.py
 GAN_UTIL_IP.py
 *.mat
+/html/
